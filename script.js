@@ -29,7 +29,7 @@ function handleEscape(event) {
 
 // Example news data
 const news = [
-    { title: "Professional Journey", content: "Managing the signaling installations for projects in the Neuchatel-Jura region." },
+    { title: "Professional Journey", content: "Expert in railroad safety installation design. Currently coding my very own interlocking." },
     { title: "New Sports Adventure", content: "Part of FlyHigh Lausanne, trying to promote 5v5, indoor or beach." },
     { title: "Upcoming Project", content: "A Frisbee flight simulator!" }
 ];
