@@ -618,28 +618,37 @@ class Polecat {
 
     setupEventListeners() { // TODO *** finish implementation
         window.addEventListener('mousedown', function (event) {
-            musterLuppe.actionSelectionMouseDown(event);
+            musterLuppe.actionSelectionMouseDown(event, false);
         })
         window.addEventListener('mouseup', function (event) {
-            musterLuppe.actionSelectionMouseUp(event);
+            musterLuppe.actionSelectionMouseUp(event, false);
         })
         window.addEventListener('touchstart', function (event) {
-            musterLuppe.actionSelectionMouseDown(event);
+            musterLuppe.actionSelectionMouseDown(event, true);
         })
         window.addEventListener('touchend', function (event) {
-            musterLuppe.actionSelectionMouseUp(event);
+            musterLuppe.actionSelectionMouseUp(event, true);
         })
     }
 
-    get_click_canvas_coord(event) {
+    get_click_canvas_coord(event, touchNotMouse) {
+        let clientX;
+        let clientY;
+        if(touchNotMouse) {
+            clientX = event.changedTouches[0].clientX;
+            clientY = event.changedTouches[0].clientY;
+        } else {
+            clientX = event.clientX;
+            clientY = event.clientY;
+        }
         const rect_ = this.canvas.getBoundingClientRect()
-        const x = event.clientX - rect_.left
-        const y = event.clientY - rect_.top
-        return [x, y];
+        const x = clientX - rect_.left
+        const y = clientY - rect_.top
+            return [x, y];
     }
 
-    actionSelectionMouseDown(event) {
-        const [x, y] = this.get_click_canvas_coord(event);
+    actionSelectionMouseDown(event, touchNotMouse) {
+        const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
         let notFound = true;
         for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
             if (this.graph_elements[i].isClicked(x,y)) {
@@ -655,9 +664,9 @@ class Polecat {
         }
     }
 
-    actionSelectionMouseUp(event) {
+    actionSelectionMouseUp(event, touchNotMouse) {
         if (this.actionSelectionMode.active) {
-            const [x, y] = this.get_click_canvas_coord(event);
+            const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
             this.actionSelectionMode.element.actionIsClicked(x, y);
             this.actionSelectionMode = { active:false, element:null }
             this.drawElements(); // this will draw the actions selection menu
