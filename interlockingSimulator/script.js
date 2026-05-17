@@ -8,7 +8,7 @@ class TrackVacancyRegister {
     }
 
     executeAction(text) {
-        switch (text) {
+        switch(text) {
             case "toggle occupation":
                 this.toggleOccupation();
                 break;
@@ -35,11 +35,16 @@ class Route {
 }
 
 class TopoElement {
-    constructor(name) {
+    constructor(itlk, name) {
+        this.itlk = itlk;
         this.neighbors = []; // All topoelements are first created, then they are linked
         this.name = name;
-        this.locked = false; // Locked in a shunting route. Rangierfahsrtassen Verschluss
+        this.locked = null; // Locked in a shunting route. Rangierfahsrtassen Verschluss. Value : "null" or pointer to the Route.
         this.graphical_rep = undefined;
+    }
+
+    isLocked() {
+        return !(this.locked === null);
     }
 
     // possibleActions() {
@@ -48,16 +53,16 @@ class TopoElement {
 }
 
 class Switch extends TopoElement {
-    constructor(arr) {
+    constructor(itlk, arr) {
         const name = arr[0];
-        super(name);
+        super(itlk, name);
         this.position = "left"; // left, right, unknown, heeled
         this.tvr = new TrackVacancyRegister();
     }
     
-    static build(arr) {
-        return new Switch(arr);
-    }
+    // static build(itlk, arr) {
+    //     return new Switch(itlk, arr);
+    // }
     
     possibleActions() {
         const switch_arr = [ "turn switch" ];
@@ -65,7 +70,7 @@ class Switch extends TopoElement {
     }
 
     executeAction(text) {
-        switch (text) {
+        switch(text) {
             case "turn switch":
                 this.turnSwitch();
                 break;
@@ -85,22 +90,22 @@ class Switch extends TopoElement {
 }
 
 class Segment extends TopoElement {
-    constructor(arr) {
+    constructor(itlk, arr) {
         const name = arr[0];
-        super(name);
+        super(itlk, name);
         this.tvr = new TrackVacancyRegister();
     }
 
-    static build(arr) {
-        return new Segment(arr);
-    }
+    // static build(itlk, arr) {
+    //     return new Segment(itlk, arr);
+    // }
     
     possibleActions() {
         return this.tvr.possibleActions();
     }
 
     executeAction(text) {
-        switch (text) {
+        switch(text) {
             default:
                 this.tvr.executeAction(text);
                 break;
@@ -110,9 +115,9 @@ class Segment extends TopoElement {
 }
 
 class Signal extends TopoElement { // futur zwerksignal
-    constructor(arr) {
+    constructor(itlk, arr) {
         const name = arr[0];
-        super(name);
+        super(itlk, name);
         this.imageShown = "stop"; // stop, warning, go 
     }
 
@@ -121,11 +126,11 @@ class Signal extends TopoElement { // futur zwerksignal
     goal() { return this.neighbors[1]; }
 
     possibleActions() {
-        return [ "bring to halt" ];
+        return [ "bring to halt", "start shunting route" ];
     }
 
     executeAction(text) {
-        switch (text) {
+        switch(text) {
             case "bring to halt":
                 this.bringToHalt();
                 break;
@@ -147,21 +152,21 @@ class Interlocking {
         const nbSw = switchIL.length;
         this.switches = [];
         for (let i = 0; i < nbSw; i++) {
-            this.switches.push(new Switch(switchIL[i]));
+            this.switches.push(new Switch(this, switchIL[i]));
         }
 
         const segmentIL = constructionDocuments[1];
         const nbSeg = segmentIL.length;
         this.segments = [];
         for (let i = 0; i < nbSeg; i++) {
-            this.segments.push(new Segment(segmentIL[i]));
+            this.segments.push(new Segment(this, segmentIL[i]));
         }
 
         const signalIL = constructionDocuments[2];
         const nbSig = signalIL.length;
         this.signals = [];
         for (let i = 0; i < nbSig; i++) {
-            this.signals.push(new Signal(signalIL[i]));
+            this.signals.push(new Signal(this, signalIL[i]));
         }        
 
         const connexionsIL = constructionDocuments[3];
@@ -188,12 +193,26 @@ class Interlocking {
         }
         return undefined;
     }
+
+    establishShuntingRoute(start, end) {
+        throw new Error("ERR15 not inplemented"); 
+        // determine route end element from user -> this is the job of polecat, not the stw
+        // find path element by element to the route
+        // in route
+        // verify elements not already locked in a route ? (except start signal if end of a route)
+        // verify elements not occupied tvr
+        // lock elements
+        // turn Weiche in the correct positions
+        // do flankenschutz
+        // change fahrbegriffe to go
+    }
+
 }
 
 class PolecatElement {
-    constructor(stw_el, polecat_parent, x, y) {
-        this.stw_el = stw_el;
-        stw_el.graphical_rep = this;
+    constructor(topo_el, polecat_parent, x, y) {
+        this.topo_el = topo_el;
+        topo_el.graphical_rep = this;
         this.polecat_parent = polecat_parent;
         if (typeof x != "number" || typeof y != "number") { throw new Error("ERR0 value must be a number"); }
         if (x <=0 || y<=0) { throw new Error("ERR1 values must be positive"); }        
@@ -202,14 +221,14 @@ class PolecatElement {
         this.actionSelectionMode = { active:false, list:[] };
     }
     
-    static createFromStwEl(stw_el, ctx, init_arr) {
-        switch(stw_el.constructor.name) {
+    static createFromTopoEl(topo_el, polecat_parent, init_arr) {
+        switch(topo_el.constructor.name) {
         case "Switch":
-            return new PolecatSwitch(stw_el, ctx, init_arr);
+            return new PolecatSwitch(topo_el, polecat_parent, init_arr);
         case "Segment":
-            return new PolecatSegment(stw_el, ctx, init_arr);
+            return new PolecatSegment(topo_el, polecat_parent, init_arr);
         case "Signal":
-            return new PolecatSignal(stw_el, ctx, init_arr);
+            return new PolecatSignal(topo_el, polecat_parent, init_arr);
         default:
             throw new Error("ERR3 non valid type");   
         }
@@ -225,11 +244,11 @@ class PolecatElement {
     get ctx() { return this.polecat_parent.ctx; }
 
     trackColor() {
-        switch(this.stw_el.tvr.state) {
+        switch(this.topo_el.tvr.state) {
             case "occupied":
                 return "red";
             case "vacant":
-                if (this.stw_el.locked) {
+                if (this.topo_el.isLocked()) {
                     return "blue";
                 } else {
                     return "black"
@@ -303,7 +322,7 @@ class PolecatElement {
     }
 
     activateActionSelectionMode() {
-        this.actionSelectionMode = { active:true, list:this.stw_el.possibleActions() };
+        this.actionSelectionMode = { active:true, list:this.topo_el.possibleActions() };
     }
 
     deactivateActionSelectionMode() {
@@ -315,8 +334,8 @@ class PolecatElement {
         const actionMenuLeft = (this.x-1)*unit_len;
         const actionMenuRight = this.x*unit_len;
         
+        let notFound = true;
         if ( (actionMenuLeft<click_x) && (click_x<actionMenuRight) ) {
-            let notFound = true;
             const actions = this.actionSelectionMode.list; // using the list saved when originally displayed, not the current situation which may have changed
             let rowPxHeight = this.actionSelectionMenuRowHeight(actions);
     
@@ -326,12 +345,16 @@ class PolecatElement {
                 actionMenuTop += rowPxHeight;
                 actionMenuBottom += rowPxHeight;
                 if ( (actionMenuTop<click_y) && (click_y<actionMenuBottom) ) {
-                    this.stw_el.executeAction(actions[i]);
+                    // this.topo_el.executeAction(actions[i]);
+                    this.executeAction(actions[i]);
                     notFound = false;
                 }
             }
         }
-        this.deactivateActionSelectionMode();
+        if (notFound) {
+            this.polecat_parent.currentMode = { name:"simple_visualisation" };
+            this.deactivateActionSelectionMode();            
+        }
     }
 
     unit_len() {
@@ -349,7 +372,7 @@ class PolecatElement {
         return rowPxHeight;
     }
 
-    drawActionSelection () {
+    drawActionSelection (actionToHighlight) {
         const ctx = this.ctx;
         const actions = this.actionSelectionMode.list;
         const unit_len = this.unit_len();
@@ -370,7 +393,7 @@ class PolecatElement {
         ctx.fillRect(xRect, yRect, unit_len, rowPxHeight);
         ctx.fillStyle = "black";        
         ctx.font = "bold italic "+textPxHeight+"px Arial";
-        ctx.fillText(this.stw_el.name, xText, yText, unit_len);
+        ctx.fillText(this.topo_el.name, xText, yText, unit_len);
         ctx.font = textPxHeight+"px Arial";
         
         const rectColors = ["rgb(100 100 100)", "rgb(200 200 200)"];
@@ -380,7 +403,11 @@ class PolecatElement {
             
             ctx.fillStyle = rectColors[i%2];
             ctx.fillRect(xRect, yRect, unit_len, rowPxHeight);
-            ctx.fillStyle = "black";        
+            if (actionToHighlight==actions[i]) {
+                ctx.fillStyle = "blue";
+            } else {
+                ctx.fillStyle = "black";
+            }
             ctx.fillText(actions[i], xText, yText, unit_len);
         }
 
@@ -389,17 +416,25 @@ class PolecatElement {
         ctx.strokeRect((this.x-1)*unit_len, (this.y-1)*unit_len, unit_len, unit_len);
 
     }
+
+
+    executeActionBackToSimpVisu(text) {
+        this.topo_el.executeAction(text);
+        this.polecat_parent.currentMode = { name:"simple_visualisation" };
+        this.deactivateActionSelectionMode();            
+    }
+
 }
 
 class PolecatSwitch extends PolecatElement {
-    constructor(stw_el, polecat_parent, init_arr) {
+    constructor(topo_el, polecat_parent, init_arr) {
         const x = init_arr[0];
         const y = init_arr[1];
         const tip = init_arr[2];
         const left = init_arr[3];
         const right = init_arr[4];
         
-        super(stw_el, polecat_parent, x, y);
+        super(topo_el, polecat_parent, x, y);
         this.validate_dir_input(tip);
         this.validate_dir_input(left);
         this.validate_dir_input(right);
@@ -441,7 +476,7 @@ class PolecatSwitch extends PolecatElement {
     
             this.drawBranch(this.tip, false);
     
-            switch(this.stw_el.position) {
+            switch(this.topo_el.position) {
                 case "left":
                     this.drawBranch(this.left, false);
                     this.drawBranch(this.right, true);
@@ -455,16 +490,20 @@ class PolecatSwitch extends PolecatElement {
             }
         }
     }
+
+    executeAction(text) {
+        this.executeActionBackToSimpVisu(text);
+    }
 }
 
 class Polecat2SidedElement extends PolecatElement {
-    constructor(stw_el, polecat_parent, init_arr) {
+    constructor(topo_el, polecat_parent, init_arr) {
         const x = init_arr[0];
         const y = init_arr[1];
         const side1 = init_arr[2]
         const side2 = init_arr[3]
 
-        super(stw_el, polecat_parent, x, y);
+        super(topo_el, polecat_parent, x, y);
         this.validate_dir_input(side1);
         this.validate_dir_input(side2);
         if(side1.slice(-1)==side2.slice(-1)) { throw new Error("ERR4 the 2 extremities must be on opposite sides"); }
@@ -504,8 +543,8 @@ class Polecat2SidedElement extends PolecatElement {
 }
 
 class PolecatSegment extends Polecat2SidedElement {
-    constructor(stw_el, polecat_parent, init_arr) {
-        super(stw_el, polecat_parent, init_arr);
+    constructor(topo_el, polecat_parent, init_arr) {
+        super(topo_el, polecat_parent, init_arr);
     }
 
     draw() {
@@ -516,11 +555,14 @@ class PolecatSegment extends Polecat2SidedElement {
             super.draw(color, color);
         }
     }
+    executeAction(text) {
+        this.executeActionBackToSimpVisu(text);
+    }
 }
 
 class PolecatSignal extends Polecat2SidedElement {
-    constructor(stw_el, polecat_parent, init_arr) {
-        super(stw_el, polecat_parent, init_arr);
+    constructor(topo_el, polecat_parent, init_arr) {
+        super(topo_el, polecat_parent, init_arr);
     }
 
     signalCoords() {        
@@ -545,7 +587,7 @@ class PolecatSignal extends Polecat2SidedElement {
     }
 
     signalColor() {
-        switch(this.stw_el.imageShown) {
+        switch(this.topo_el.imageShown) {
             case "stop": return "red";
             case "warning": return "orange";
             case "go": return "green";
@@ -555,11 +597,15 @@ class PolecatSignal extends Polecat2SidedElement {
 
     draw() {
         if (this.actionSelectionMode.active) {
-            this.drawActionSelection();
+            if (this.polecat_parent.currentMode.name == "shunting_route_end_selection") {
+                this.drawActionSelection("start shunting route");
+            } else {
+                this.drawActionSelection();
+            }
         } else {
-            let col = this.stw_el.origin().graphical_rep.trackColor();
+            let col = this.topo_el.origin().graphical_rep.trackColor();
             this.drawHalf(this.side1, col);
-            col = this.stw_el.goal().graphical_rep.trackColor();
+            col = this.topo_el.goal().graphical_rep.trackColor();
             this.drawHalf(this.side2, col)
 
             col = this.signalColor();
@@ -572,15 +618,26 @@ class PolecatSignal extends Polecat2SidedElement {
             this.ctx.stroke();
         }
     }
+
+    executeAction(text) {
+        switch(text) {
+            case "start shunting route":
+                this.polecat_parent.currentMode = { name:"shunting_route_end_selection", start:this };
+                break;
+            default:
+                this.executeActionBackToSimpVisu(text);
+                break;
+        }
+    }
 }
 
 class Polecat {
-    constructor(stw, BU_graph) {
-        
+    constructor(itlk, BU_graph) {
+        this.itlk = itlk;
         this.graph_elements = [];
         BU_graph.forEach(el => {
-            const stw_el = stw.findTopoEl(el[0]);
-            const new_polecat_el = PolecatElement.createFromStwEl(stw_el, this, el.slice(1)); // slice takes subarray, excluding first number
+            const topo_el = itlk.findTopoEl(el[0]);
+            const new_polecat_el = PolecatElement.createFromTopoEl(topo_el, this, el.slice(1)); // slice takes subarray, excluding first number
             this.graph_elements.push(new_polecat_el); 
         });
 
@@ -590,8 +647,9 @@ class Polecat {
 
         this.unit_len = 99; // One unit is 99 pixels. Code is meant to use odd number.
 
-        this.actionSelectionMode = { active:false, element:null } ;
-
+        // this.actionSelectionMode = { active:false, element:null } ;
+        this.currentMode = { name:"simple_visualisation" }; // simple_visualisation, single_element_action_selection, shunting_route_end_selection
+        
         this.setTotalWidthHeigth();
         this.drawElements();
 
@@ -618,16 +676,20 @@ class Polecat {
 
     setupEventListeners() { // TODO *** finish implementation
         window.addEventListener('mousedown', function (event) {
-            musterLuppe.actionSelectionMouseDown(event, false);
+            musterLuppe.actionSelectionMouseDown(event, false); // *** mettre this plutot que musterLuppe ?
+            // this.actionSelectionMouseDown(event, false);
         })
         window.addEventListener('mouseup', function (event) {
             musterLuppe.actionSelectionMouseUp(event, false);
+            // this.actionSelectionMouseUp(event, false);
         })
         window.addEventListener('touchstart', function (event) {
             musterLuppe.actionSelectionMouseDown(event, true);
+            // this.actionSelectionMouseDown(event, true);
         })
         window.addEventListener('touchend', function (event) {
             musterLuppe.actionSelectionMouseUp(event, true);
+            // this.actionSelectionMouseUp(event, true);
         })
     }
 
@@ -648,29 +710,103 @@ class Polecat {
     }
 
     actionSelectionMouseDown(event, touchNotMouse) {
+
+        // switch the mode ?
+        // only do on clicks mouse down, not on mouse up. otherwise its too complicated
+        // if simple_visual
+        //      if click on element -> open the menu action selection mode
+        //      else  do nothing 
+        // if single element action selection mode
+        //      if click on action -> do it
+        //          if start shunting route -> shunting route endpoint selection mode
+        //          else back to simple_visualisation
+        //          !!!!! so the action changes the mode
+        //      else  back to simple_visualisation    (if click anywhere other than action !)
+        // if shunting route end element selection
+        //      if an element is clicked -> tell itlk to make a route.
+        //      back to simple_visualisation
         const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
-        let notFound = true;
-        for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
-            if (this.graph_elements[i].isClicked(x,y)) {
-                // this.graph_elements[i].actionSelectionModeOn = true;
-                this.graph_elements[i].activateActionSelectionMode();
-                this.actionSelectionMode = { active:true, element:this.graph_elements[i] }
-                // this.actionSelectionMode = true;
-                notFound = false;
-            }
+
+        switch(this.currentMode.name) {
+            case "simple_visualisation":
+                this.simpVisuClick(x, y);
+                break;
+            case "single_element_action_selection":
+                this.singEleActSelClick(x, y);
+                break;
+            case "shunting_route_end_selection":
+                this.shunRouEndSelClick(x, y);
+                break;
+            default:
+                throw new Error("ERR18 unknow mode");
+                break;
         }
-        if(!notFound) {
-            this.drawElements(); // this will draw the actions selection menu
-        }
+
+
+
+        // const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
+        // let notFound = true;
+        // for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
+        //     if (this.graph_elements[i].isClicked(x,y)) {
+        //         // this.graph_elements[i].actionSelectionModeOn = true;
+        //         this.graph_elements[i].activateActionSelectionMode(); // *** a supprimer / modifier
+        //         this.actionSelectionMode = { active:true, element:this.graph_elements[i] }
+        //         // this.actionSelectionMode = true;
+        //         notFound = false;
+        //     }
+        // }
+        // if(!notFound) {
+        //     this.drawElements(); // this will draw the actions selection menu
+        // }
     }
 
     actionSelectionMouseUp(event, touchNotMouse) {
-        if (this.actionSelectionMode.active) {
-            const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
-            this.actionSelectionMode.element.actionIsClicked(x, y);
-            this.actionSelectionMode = { active:false, element:null }
-            this.drawElements(); // this will draw the actions selection menu
+        // if (this.actionSelectionMode.active) {
+        //     const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
+        //     this.actionSelectionMode.element.actionIsClicked(x, y);
+        //     this.actionSelectionMode = { active:false, element:null }
+        //     this.drawElements();
+        // }
+    }
+
+    simpVisuClick(click_x, click_y) { // if click on element -> open the menu action selection mode
+        let notFound = true;
+        for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
+            if (this.graph_elements[i].isClicked(click_x,click_y)) {
+                this.graph_elements[i].activateActionSelectionMode();
+                this.currentMode = { name:"single_element_action_selection", element:this.graph_elements[i] };
+                notFound = false;
+                this.drawElements(); // this will draw the actions selection menu
+            }
         }
+    }
+
+    singEleActSelClick(click_x, click_y) {
+        this.currentMode.element.actionIsClicked(click_x, click_y);
+        this.drawElements();
+    }
+    
+    shunRouEndSelClick(click_x, click_y) {
+        // if shunting route end element selection
+        //      if an element is clicked -> tell itlk to make a route.
+        //      back to simple_visualisation
+        
+        let notFound = true;
+        for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
+            if (this.graph_elements[i].isClicked(click_x, click_y)) {
+                
+                const topo_el_start = this.currentMode.start.topo_el;
+                const topo_el_end = this.graph_elements[i].topo_el;
+
+                this.itlk.establishShuntingRoute(topo_el_start, topo_el_end);
+
+                notFound = false;
+            }
+        }
+        
+        this.currentMode.start.deactivateActionSelectionMode();
+        this.currentMode = { name:"simple_visualisation" };
+        this.drawElements();
     }
     
     // get ctx() { return this.ctx; }
