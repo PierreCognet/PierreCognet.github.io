@@ -70,14 +70,18 @@ class Route {
         for (let i=0; i < this.start_to_finish_topo_el.length; i++) {
             this.flanckProtectionStatus[i] = this.start_to_finish_topo_el[i].protectFlanck();
             if(this.flanckProtectionStatus[i]!="weak" && this.flanckProtectionStatus[i]!="strong") {
-                throw new Error("ERR36 an elements couldn't protect flanck."); // To implement: not a problem if couldn't for shunting routes. or waits for the protection to come.
+                throw new Error("An element couldn't protect flanck."); // To implement: not a problem if couldn't for shunting routes. or waits for the protection to come.
             }
         }
     }
 
     fireSignals() {
-        // change fahrbegriffe to go
-        this.start_to_finish_topo_el[0].imageShown = "go";
+        let prevSignalCanShow = undefined;
+        let nextNeiInRouDir = undefined;
+        for (let i = this.start_to_finish_topo_el.length - 1; i >= 0; i--) {
+            prevSignalCanShow = this.start_to_finish_topo_el[i].shunRouSignalImageAlgo(prevSignalCanShow, nextNeiInRouDir);
+            nextNeiInRouDir = this.start_to_finish_topo_el[i];
+        }
     }
 
     // Add route types ? shunting, train -> to let flanckenschutz know the type of priority to give it. 
@@ -118,6 +122,15 @@ class TopoElement {
     requestFlanckProtection(requester, route) { throw new Error("ERR35 all topoElements must implement this function."); } // Returns, "none", "weak" or "strong".
 
     possibleActions() { throw new Error("TopoElements must implement this function."); } // All commands that can be given to this element from the polecat interface. 
+
+    shunRouSignalImageAlgo(imageToShow, nextNeiInRouDir) { throw new Error("TopoElements must implement this function."); } // The algorithm to fire signals of a shunting. Returns the image allowed for preceding signal. 1rst paremeter taken is the image that the signal can show. 2nd parameter is to ignore signals in the wrong direction.
+    shunRouSignalImageAlgo_tvr(imageToShow) {
+        if (this.tvr.isVacant()) {
+            return imageToShow; // pass on the image without modifying it
+        } else {
+            return "warning"; // the preceding signal must show warning because track is occupied
+        }
+    }
 }
 
 class Switch extends TopoElement {
@@ -149,7 +162,7 @@ class Switch extends TopoElement {
     isNormalState() { return (this.position=="left" || this.position=="right"); }
 
     possibleActions() {
-        const switch_arr = [ "try to turn switch" ]; // "force turn switch"
+        const switch_arr = [ "turn switch" ]; // "force turn switch"
         return switch_arr.concat(this.tvr.possibleActions());
     }
 
@@ -250,8 +263,8 @@ class Switch extends TopoElement {
 
     executeAction(text) {
         switch(text) {
-            case "try to turn switch":
-                this.tryToTurnSwitch();
+            case "turn switch":
+                this.tryToTurnSwitch(true);
                 break;
             default:
                 this.tvr.executeAction(text);
@@ -259,31 +272,43 @@ class Switch extends TopoElement {
         }
     }
 
-    tryToTurnSwitch() {
+    tryToTurnSwitch(throwErrIfCant=false) {
         let desiredPos;
         if (this.position=="left") { desiredPos = "right"; }
         else if (this.position=="right") { desiredPos = "left"; }
         else { throw new Error("ERR12 unknown position"); }
-        this.tryToTurnSwitchTo(desiredPos);
+        this.tryToTurnSwitchTo(desiredPos, throwErrIfCant);
     }
 
-    tryToTurnSwitchTo(desiredPos) { // Refuse to turn if reserved in route or locked for flank protection or if occupied.
+    tryToTurnSwitchTo(desiredPos, throwErrIfCant=false) { // Refuse to turn if reserved in route or locked for flank protection or if occupied.
 
         if (desiredPos!="left" && desiredPos!="right") { throw new Error("ERR45 incorrect input"); }
 
         if (desiredPos!=this.position) {
-            if (!this.tvr.isVacant()) { return; }
+            if (!this.tvr.isVacant()) { 
+                if (throwErrIfCant) { throw new Error("Cannot turn switch " + this.name + " because it is occupied."); }
+                else { return; }
+            }
             
-            if (this.reservedDesiredPosition!==null && this.reservedDesiredPosition!=desiredPos) { return; }
+            if (this.reservedDesiredPosition!==null && this.reservedDesiredPosition!=desiredPos) {
+                if (throwErrIfCant) { throw new Error("Cannot turn switch " + this.name + " because it is reserved in a route."); }
+                else { return; }
+            }
 
             for (let i = 0; i < this.flanckProtectionRequests.length; i++) {
-                if (this.flanckProtectionRequests[i].desiredPosition!=desiredPos) { return; }
+                if (this.flanckProtectionRequests[i].desiredPosition!=desiredPos) {
+                    if (throwErrIfCant) { throw new Error("Cannot turn switch " + this.name + " because it is protecting flank of a route."); }
+                    else { return; }
+                }
             }
             this.position = desiredPos;
         }
         // Else do nothing, the switch is already in the correct posistion.
     }
 
+    shunRouSignalImageAlgo(imageToShow, nextNeiInRouDir) {
+        return this.shunRouSignalImageAlgo_tvr(imageToShow);
+    }
 }
 
 class Segment extends TopoElement {
@@ -336,6 +361,9 @@ class Segment extends TopoElement {
         }
     }
 
+    shunRouSignalImageAlgo(imageToShow, nextNeiInRouDir) {
+        return this.shunRouSignalImageAlgo_tvr(imageToShow);
+    }
 }
 
 class Signal extends TopoElement { // futur zwergsignal
@@ -399,6 +427,28 @@ class Signal extends TopoElement { // futur zwergsignal
     bringToHalt() {
         this.imageShown = "stop"; // stop, warning, go 
         // To implement: bringing to halt needs to change the state of the route (to deranged or violated or something) destroy the routes ?
+    }
+
+    shunRouSignalImageAlgo(imageToShow, nextNeiInRouDir) {
+        if (imageToShow===undefined) { // this is the first iteration of the algorithm, so on the end signal, read its current imageShown, and pass on the improved image.
+            if (this.imageShown=="stop") {
+                return "warning";
+            } else if (this.imageShown=="warning" || this.imageShown=="go") {
+                return "go";
+            } else {
+                throw new Error("unexpected value");
+            }
+        } else if (imageToShow=="warning" || imageToShow=="go") {
+            if (nextNeiInRouDir==this.getGoal()) {
+                this.imageShown = imageToShow;
+                return "go";
+            } else {
+                if (this.imageShown!="stop"){ throw new Error("an opposing signal isn't showing stop");  } // To implement: find a better place in the shunting route establishing algorithm to check this.
+                return imageToShow; // do nothing, just pass on the value, the signal is in the opposite direction to the route
+            }
+        } else {
+            throw new Error("unexpected value");
+        }
     }
 }
 
@@ -643,7 +693,9 @@ class PolecatElement {
     }
 
     simpleExecuteAction(text) {
-        this.topo_el.executeAction(text);
+        this.polecat_parent.tryItlk(this.topo_el.name + ": " + text,
+                                    () => this.topo_el.executeAction(text));
+        // this.topo_el.executeAction(text);
     }
 
     drawReserved() { // Draw a bleu square if element is reserved in a route.
@@ -1015,6 +1067,11 @@ class Polecat {
                 this.drawElements();
             }
         });
+
+        document.getElementById("monitorClear").addEventListener("click", () => {
+            document.getElementById("monitorLog").innerHTML = "";
+        });
+
     }
 
     get_click_canvas_coord(event, touchNotMouse) {
@@ -1034,19 +1091,14 @@ class Polecat {
     }
 
     shunRouEndSelClick(click_x, click_y) {
-        let notFound = true;
-        for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
-            if (this.graph_elements[i].isClicked(click_x, click_y)) {
-                
-                const topo_el_start = this.currentMode.start.topo_el;
-                const topo_el_end = this.graph_elements[i].topo_el;
+        const target = this.polecatElementAt(click_x, click_y);
+        if (target === null) { return; } // didn't click on an element
 
-                this.itlk.establishShuntingRoute(topo_el_start, topo_el_end);
-                // if there is an error thrown, display it on the monitor
+        const topo_el_start = this.currentMode.start.topo_el;
+        const topo_el_end   = target.topo_el;
 
-                notFound = false;
-            }
-        }
+        this.tryItlk("shunting route " + topo_el_start.name + " -> " + topo_el_end.name,
+                        () => this.itlk.establishShuntingRoute(topo_el_start, topo_el_end));
     }
     
     openMenu(pc_el, px, py) {
@@ -1133,6 +1185,41 @@ class Polecat {
             this.openMenu(polecatEl, x, y);
         }
         this.drawElements();
+    }
+
+    // displaying errors
+    report(message, level = "info") {
+        const log = document.getElementById("monitorLog");
+        // if (!log) { console.log(level, message); return; }
+        if (!log) { return; }
+
+        const li = document.createElement("li");
+        li.className = level + " fresh";
+
+        const ts = document.createElement("span");
+        ts.className = "ts";
+        ts.textContent = new Date().toLocaleTimeString([], { hour12:false });
+        li.appendChild(ts);
+
+        const msg = document.createElement("span");
+        msg.className = "msg";
+        msg.textContent = message;
+        li.appendChild(msg);
+
+        log.prepend(li); // newest on top
+        while (log.children.length > 50) { log.lastChild.remove(); } // max 50 logs
+        setTimeout(() => li.classList.remove("fresh"), 5000); // new logs flash (for 5000ms i think)
+    }
+
+    // run an interlocking operation, display any error to the monitor
+    tryItlk(description, fn) {
+        try {
+            fn();
+            this.report(description + " OK", "ok");
+        } catch (err) {
+            this.report(err, "error");
+            console.error(err);
+        }
     }
 }
 
