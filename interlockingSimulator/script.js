@@ -1,6 +1,6 @@
 class TrackVacancyRegister {
     constructor() {
-        this.state = "vacant"; // vacant, occupied or disturbed
+        this.state = "vacant"; // vacant, occupied or faulty
     }
 
     possibleActions() {
@@ -23,56 +23,232 @@ class TrackVacancyRegister {
         else if (this.state=="occupied") { this.state = "vacant"; }
         else { throw new Error("ERR13 unknown state");
         ; }
-        // add other cases like disturbed, etc
+        // add other cases like faulty, etc
     }
+
+    isVacant() { return this.state=="vacant"; }
 
 }
 
 class Route {
-    constructor(star_to_finish_topo_el) {
-        this.star_to_finish_topo_el = star_to_finish_topo_el;
+    constructor(start_to_finish_topo_el) {
+        this.start_to_finish_topo_el = start_to_finish_topo_el;
+        this.flanckProtectionStatus = Array(start_to_finish_topo_el.length).fill("uninitialized");
+        this.status = "initialised"; // "initializing", "permitted", "violated"          // To implement : add states, initializing, locked, correctly oriented, ready, signals show green, train started riding, disrupted
+
     }
+
+    //    reserveElements() {
+    //        for (let i=0; i < this.start_to_finish_topo_el.length; i++) { 
+    //            this.start_to_finish_topo_el[i].reserve(this);
+    //        }
+    //        // this.status = "reserved";
+    //    }
+
+    readyRoute() {
+        this.reserveAndOrientElements();
+        this.protectFlanck();
+        this.fireSignals();
+        this.status = "permitted";
+    }
+
+    reserveAndOrientElements() {
+        // To implement, treat the case of start and end signal better ?
+        this.start_to_finish_topo_el[0].reserveAndOrientStartToEnd(this, this.start_to_finish_topo_el[0].getOrigin(), this.start_to_finish_topo_el[0].getGoal());
+        this.start_to_finish_topo_el.at(-1).reserveAndOrientStartToEnd(this, this.start_to_finish_topo_el.at(-1).getOrigin(), this.start_to_finish_topo_el.at(-1).getGoal());
+
+        for (let i=1; i < this.start_to_finish_topo_el.length-1; i++) {
+            this.start_to_finish_topo_el[i].reserveAndOrientStartToEnd(this, this.start_to_finish_topo_el[i-1], this.start_to_finish_topo_el[i+1]);
+        }
+        // this.status = "oriented";
+    }
+
+    protectFlanck() {
+        for (let i=0; i < this.start_to_finish_topo_el.length; i++) {
+            this.flanckProtectionStatus[i] = this.start_to_finish_topo_el[i].protectFlanck();
+            if(this.flanckProtectionStatus[i]!="weak" && this.flanckProtectionStatus[i]!="strong") {
+                throw new Error("ERR36 an elements couldn't protect flanck."); // To implement: not a problem if couldn't for shunting routes. or waits for the protection to come.
+            }
+        }
+    }
+
+    fireSignals() {
+        // change fahrbegriffe to go
+        this.start_to_finish_topo_el[0].imageShown = "go";
+    }
+
+    // Add route types ? shunting, train -> to let flanckenschutz know the type of priority to give it. 
 }
 
 class TopoElement {
     constructor(itlk, name) {
         this.itlk = itlk;
-        this.neighbors = []; // All topoelements are first created, then they are linked
         this.name = name;
-        this.locked = null; // Locked in a shunting route. Rangierfahsrtassen Verschluss. Value : "null" or pointer to the Route.
+        this.reserved = null; // Reserved by a shunting route. Rangierfahsrtassen Verschluss. Value : "null" or reference to the Route.
+        this.flanckProtectionRequests = []; // To implement : list of all current neighbors asking for flank protection. [ {neighbor:xxx, route:yyy}, {neighbor:zzz, route:aaa}  ]  all elements should have flankSurveillance parameter. An object that points the the route asking the protection, the neighbor who requested protection.
         this.graphical_rep = undefined;
     }
 
-    isLocked() {
-        return !(this.locked === null);
+    isReserved() { return !(this.reserved === null); }
+    
+    reserve(route) {
+        if (!(this.reserved === null)) {
+            throw new Error("ERR26 topoElements is already reserved by another route.");
+        }
+        this.reserved = route;
     }
 
-    // possibleActions() {
-    //     return [];
-    // }
+    neighorsbWhenCommingFrom(origin) { throw new Error("ERR16 all topoElements must implement this function."); }
+
+    trackVacancySuitableForRoute() { throw new Error("ERR24 all topoElements must implement this function."); }
+    trackVacancySuitableForRoute_elementWithTVR() {
+        return this.tvr.isVacant(); // Anything other than "vacant" is unsuitable. (occupied, faulty, etc)
+    }
+
+    reserveAndOrientStartToEnd(route, startNeighbor, endNeighbor) { throw new Error("ERR27 all topoElements must implement this function."); }
+
+    protectFlanck() { throw new Error("ERR32 all topoElements must implement this function."); } // For now, no parameters needed. Suppose that the route is already locked. Returns if successful or not.
+    protectFlanck_2NeighboredElement() {
+        return "strong"; // Do nothing. The element is a track segment or a signal, etc.
+    }
+
+    requestFlanckProtection(requester, route) { throw new Error("ERR35 all topoElements must implement this function."); } // Returns, "none", "weak" or "strong".
+
+    possibleActions() { throw new Error("TopoElements must implement this function."); } // All commands that can be given to this element from the polecat interface. 
 }
 
 class Switch extends TopoElement {
-    constructor(itlk, arr) {
-        const name = arr[0];
+    constructor(itlk, name) {
         super(itlk, name);
         this.position = "left"; // left, right, unknown, heeled
         this.tvr = new TrackVacancyRegister();
+        this.reservedDesiredPosition = null;
     }
     
     // static build(itlk, arr) {
     //     return new Switch(itlk, arr);
     // }
-    
+
+    setTip(topoEl) { this.tip = topoEl; }
+    getTip() { return this.tip; }
+    setLeft(topoEl) { this.left = topoEl; }
+    getLeft() { return this.left; }
+    setRight(topoEl) { this.right = topoEl; }
+    getRight() { return this.right; }
+
+    whoIsThisNeighbor(topo_el) {
+        if (topo_el===this.getTip()) { return "tip"; }
+        else if (topo_el===this.getLeft()) { return "left"; }
+        else if (topo_el===this.getRight()) { return "right"; }
+        else { throw new Error("Not a neighbor."); }
+    }
+
+    isNormalState() { return (this.position=="left" || this.position=="right"); }
+
     possibleActions() {
-        const switch_arr = [ "turn switch" ];
+        const switch_arr = [ "try to turn switch" ]; // "force turn switch"
         return switch_arr.concat(this.tvr.possibleActions());
+    }
+
+    neighorsbWhenCommingFrom(origin) {
+        if (origin===this.getTip()) {
+            return [ this.getLeft(), this.getRight() ];
+        } else if (origin===this.getLeft() || origin===this.getRight()) {
+            return [ this.getTip() ];
+        } else {
+            throw new Error("ERR21 The input given should be one of the two neighbors.");
+        }
+    }
+
+    trackVacancySuitableForRoute() { return this.trackVacancySuitableForRoute_elementWithTVR(); }
+
+    reserveAndOrientStartToEnd(route, startNeighbor, endNeighbor) {
+        this.reserve(route);
+
+        let branchNeighbor;
+        if (startNeighbor===this.getTip()) { branchNeighbor = endNeighbor; }
+        else if (endNeighbor===this.getTip()) { branchNeighbor = startNeighbor; }
+        else { throw new Error("ERR28 one of the neighbors should be the tip"); }
+
+        if (this.isNormalState()) {
+
+            // let desiredPosition;
+            if (branchNeighbor===this.getLeft()) { this.reservedDesiredPosition = "left"; }
+            else if (branchNeighbor===this.getRight()) { this.reservedDesiredPosition = "right"; }
+            else { throw new Error("ERR29 one of the neighbors should be a branch"); }
+
+            this.tryToTurnSwitchTo(this.reservedDesiredPosition);
+
+            // if (this.position!=this.reservedDesiredPosition) { this.tryToTurnSwitch(); }
+            // if (this.position!=desiredPosition) { throw new Error("ERR30 Failed to turn switch to desired position."); }
+
+        } else {
+            throw new Error("ERR31 switch not in normal state (is faulty).");
+        }
+    }
+
+    protectFlanck() {
+        // To implement : make a better implementation where a weiche remembers that it was asked to give flankenschutz but couldnt because was in the einzelverschluss, so passed on the protection request further. When the einzelverschluss is removed, it can turn to flankenschutz position and retire the elements further that were doing flankenschutz.
+        let flanckProtectionRequestNeighbor;
+        if (this.position=="left") { flanckProtectionRequestNeighbor = this.getRight(); }
+        else if (this.position=="right") { flanckProtectionRequestNeighbor = this.getLeft(); }
+        else { throw new Error("ERR33 this switch isn't in a defined position."); }
+
+        if (this.isReserved()) {
+            return flanckProtectionRequestNeighbor.requestFlanckProtection(this, this.reserved);
+        } else {
+            throw new Error("ERR34 the switch must be reserved by a route to demand flanck protection.");
+        }
+    }
+
+    requestFlanckProtection(requester, route) { 
+        let fpr = {neighbor:requester, route:route} // flanck protection request
+        this.flanckProtectionRequests.push(fpr);
+
+        if (requester===this.getTip()) {
+            if (this.tvr.isVacant()){
+                fpr.vacancySurpervised = true;
+
+                let fp_left = this.getLeft().requestFlanckProtection(this, route);
+                let fp_right = this.getRight().requestFlanckProtection(this, route);
+                
+                if (fp_left=="none" || fp_right=="none") { return "none"; }
+                else if (fp_left=="weak" || fp_right=="weak") { return "weak"; }
+                else if (fp_left=="strong" && fp_right=="strong") { return "strong"; }
+                else { throw new Error("ERR42 the flanck protections have unexpected value."); }
+            } else {
+                return "none";
+            }
+        } else {
+            if (requester===this.getLeft()) { fpr.desiredPosition = "right"; }
+            else if (requester===this.getRight()) { fpr.desiredPosition = "left"; }
+            else { throw new Error("ERR40 the requester is not a neighbor"); }
+
+            if (this.position==fpr.desiredPosition) { 
+                return "strong";
+            }
+
+            this.tryToTurnSwitchTo(fpr.desiredPosition);
+
+            if (this.position==fpr.desiredPosition) { 
+                return "strong"; // Doesn't need to be vacant the switch is in protecting position. A train could be passing on it.
+            } else if (this.isNormalState()) {
+                if (this.tvr.isVacant()){
+                    fpr.vacancySurpervised = true;
+                    return this.getTip().requestFlanckProtection(this, route); // The desired flanck protection position is saved, but for now we look for protection further.
+                } else {
+                    return "none"; // Switch is positionned towards route and is occupied, so isn't protecting flanck.
+                }
+            } else {
+                return "none"; // Faulty, etc.
+            }
+        }
     }
 
     executeAction(text) {
         switch(text) {
-            case "turn switch":
-                this.turnSwitch();
+            case "try to turn switch":
+                this.tryToTurnSwitch();
                 break;
             default:
                 this.tvr.executeAction(text);
@@ -80,26 +256,71 @@ class Switch extends TopoElement {
         }
     }
 
-    turnSwitch() {
-        if (this.position=="left") { this.position = "right"; }
-        else if (this.position=="right") { this.position = "left"; }
-        else { throw new Error("ERR12 unknown position");
-        ; }
-        // add other cases like heeled, etc
+    tryToTurnSwitch() {
+        let desiredPos;
+        if (this.position=="left") { desiredPos = "right"; }
+        else if (this.position=="right") { desiredPos = "left"; }
+        else { throw new Error("ERR12 unknown position"); }
+        this.tryToTurnSwitchTo(desiredPos);
     }
+
+    tryToTurnSwitchTo(desiredPos) { // Refuse to turn if reserved in route or locked for flank protection or if occupied.
+
+        if (desiredPos!="left" && desiredPos!="right") { throw new Error("ERR45 incorrect input"); }
+
+        if (desiredPos!=this.position) {
+            if (!this.tvr.isVacant()) { return; }
+            
+            if (this.reservedDesiredPosition!==null && this.reservedDesiredPosition!=desiredPos) { return; }
+
+            for (let i = 0; i < this.flanckProtectionRequests.length; i++) {
+                if (this.flanckProtectionRequests[i].desiredPosition!=desiredPos) { return; }
+            }
+            this.position = desiredPos;
+        }
+        // Else do nothing, the switch is already in the correct posistion.
+    }
+
 }
 
 class Segment extends TopoElement {
-    constructor(itlk, arr) {
-        const name = arr[0];
+    constructor(itlk, name) {
         super(itlk, name);
         this.tvr = new TrackVacancyRegister();
     }
 
-    // static build(itlk, arr) {
-    //     return new Segment(itlk, arr);
-    // }
+    setNeighbors(topoEl1, topoEl2) { this.neighbors = [ topoEl1, topoEl2]; }
+    getNeighbors() { return this.neighbors; }
+
+    neighorsbWhenCommingFrom(origin) {
+        return [ this.oppositeNeighbor(origin) ];
+    }
+
+    oppositeNeighbor(neighbor) {
+        if (neighbor===this.getNeighbors()[0]) {
+            return this.getNeighbors()[1];
+        } else if (neighbor===this.getNeighbors()[1]) {
+            return this.getNeighbors()[0];
+        } else {
+            throw new Error("ERR38 The input given should be one of the two neighbors.");
+        }
+    }
+
+    trackVacancySuitableForRoute() { return this.trackVacancySuitableForRoute_elementWithTVR(); }
+
+    reserveAndOrientStartToEnd(route, startNeighbor, endNeighbor) { this.reserve(route); }
     
+    protectFlanck() { return this.protectFlanck_2NeighboredElement(); }
+    
+    requestFlanckProtection(requester, route) {
+        this.flanckProtectionRequests.push({neighbor:requester, route:route});
+        if (this.tvr.isVacant()){
+            return this.oppositeNeighbor(requester).requestFlanckProtection(this, route);
+        } else {
+            return "none";
+        }
+    }
+
     possibleActions() {
         return this.tvr.possibleActions();
     }
@@ -114,16 +335,17 @@ class Segment extends TopoElement {
 
 }
 
-class Signal extends TopoElement { // futur zwerksignal
-    constructor(itlk, arr) {
-        const name = arr[0];
+class Signal extends TopoElement { // futur zwergsignal
+    constructor(itlk, name) {
         super(itlk, name);
         this.imageShown = "stop"; // stop, warning, go 
     }
 
-    origin() { return this.neighbors[0]; }
+    setOrigin(topoEl) { this.origin = topoEl; }
+    getOrigin() { return this.origin; }
 
-    goal() { return this.neighbors[1]; }
+    setGoal(topoEl) { this.goal = topoEl; }
+    getGoal() { return this.goal; }
 
     possibleActions() {
         return [ "bring to halt", "start shunting route" ];
@@ -140,9 +362,40 @@ class Signal extends TopoElement { // futur zwerksignal
         }
     }
 
+    neighorsbWhenCommingFrom(origin) {
+        if (origin===this.getOrigin()) {
+            return [ this.getGoal() ];
+        } else if (origin===this.getGoal()) {
+            return [ this.getOrigin() ];
+        } else {
+            throw new Error("ERR19 The input given should be one of the two neighbors.");
+        }
+    }
+
+    trackVacancySuitableForRoute() { return true; }
+
+    reserveAndOrientStartToEnd(route, startNeighbor, endNeighbor) { this.reserve(route); }
+
+    protectFlanck() { return this.protectFlanck_2NeighboredElement(); }
+    
+    requestFlanckProtection(requester, route) {
+        this.flanckProtectionRequests.push({neighbor:requester, route:route});
+        if (requester===this.getOrigin()) {
+            return this.getGoal().requestFlanckProtection(this, route);
+        } else if (requester===this.getGoal()) {
+            if (this.imageShown=="stop") {
+                return "weak";
+            } else {
+                return "none";
+            }
+        } else {
+            throw new Error("ERR39 The input given should be one of the two neighbors.");
+        }
+    }
+
     bringToHalt() {
         this.imageShown = "stop"; // stop, warning, go 
-        // destroy the routes ?
+        // To implement: bringing to halt needs to change the state of the route (to deranged or violated or something) destroy the routes ?
     }
 }
 
@@ -152,34 +405,36 @@ class Interlocking {
         const nbSw = switchIL.length;
         this.switches = [];
         for (let i = 0; i < nbSw; i++) {
-            this.switches.push(new Switch(this, switchIL[i]));
+            this.switches.push(new Switch(this, switchIL[i][0]));
         }
 
         const segmentIL = constructionDocuments[1];
         const nbSeg = segmentIL.length;
         this.segments = [];
         for (let i = 0; i < nbSeg; i++) {
-            this.segments.push(new Segment(this, segmentIL[i]));
+            this.segments.push(new Segment(this, segmentIL[i][0]));
         }
 
         const signalIL = constructionDocuments[2];
         const nbSig = signalIL.length;
         this.signals = [];
         for (let i = 0; i < nbSig; i++) {
-            this.signals.push(new Signal(this, signalIL[i]));
+            this.signals.push(new Signal(this, signalIL[i][0]));
         }        
 
-        const connexionsIL = constructionDocuments[3];
-        const nbCon = connexionsIL.length;
-        for (let i = 0; i < nbCon; i++) {
-            const topoElName = connexionsIL[i][0];
-            const topoEl = this.findTopoEl(topoElName); // exeptions i undefined ?
-            const topoElNeiList = connexionsIL[i][1];
-            const nbNei = topoElNeiList.length
-            for (let j = 0; j < nbNei; j++) {                
-                topoEl.neighbors.push(this.findTopoEl(topoElNeiList[j]));
-            }
+        // Now that all elements are created, link them together.
+        for (let i = 0; i < nbSw; i++) {
+            this.switches[i].setTip(this.findTopoEl(switchIL[i][1])); // exeptions if undefined ?
+            this.switches[i].setLeft(this.findTopoEl(switchIL[i][2])); // exeptions if undefined ?
+            this.switches[i].setRight(this.findTopoEl(switchIL[i][3])); // exeptions if undefined ?
         }
+        for (let i = 0; i < nbSeg; i++) {
+            this.segments[i].setNeighbors( this.findTopoEl(segmentIL[i][1]), this.findTopoEl(segmentIL[i][2])); // exeptions if undefined ?
+        }
+        for (let i = 0; i < nbSig; i++) {
+            this.signals[i].setOrigin(this.findTopoEl(signalIL[i][1])); // exeptions if undefined ?
+            this.signals[i].setGoal(this.findTopoEl(signalIL[i][2])); // exeptions if undefined ?
+        }        
 
         this.routes = [];
     }
@@ -195,16 +450,68 @@ class Interlocking {
     }
 
     establishShuntingRoute(start, end) {
-        throw new Error("ERR15 not inplemented"); 
         // determine route end element from user -> this is the job of polecat, not the stw
-        // find path element by element to the route
-        // in route
-        // verify elements not already locked in a route ? (except start signal if end of a route)
-        // verify elements not occupied tvr
-        // lock elements
-        // turn Weiche in the correct positions
-        // do flankenschutz
-        // change fahrbegriffe to go
+
+        // find route path: element by element
+        let visited_directed_segment = new Set();
+        const retVal = this.recFuncFindPath(start, start.getGoal(), end, visited_directed_segment);
+        const foundIt = retVal[0];
+        if (!foundIt) { throw new Error("ERR22 couldn't find a path from start to end"); }
+        const start_to_finish_topo_el = retVal[1].reverse();
+
+        // Elements already locked in a route ?
+        // Start signal cannot already be end of another shunting route.
+        // End signal cannot already be start of a shunting route.
+        // For now shunting routes are very seperate. Implement more complete routes later.
+        for (let i=0; i < start_to_finish_topo_el.length; i++) { 
+            if (start_to_finish_topo_el[i].isReserved()) {
+                throw new Error("ERR23 an element of the route is already locked by another shunting route.");
+            }
+        }
+
+        // To implement : Choose among the multiple possible routes. For now breath first search.
+
+        // Tracks are vacant ? // not needed for shunting routes normally. Only Iltis does the check.
+        for (let i=0; i < start_to_finish_topo_el.length; i++) { 
+            if (!start_to_finish_topo_el[i].trackVacancySuitableForRoute()) {
+                throw new Error("ERR25 an element of the route has unsuitable vacancy. For exemple, is occupied.");
+            }
+        }
+
+        // Create route, lock elements.
+        const r = new Route(start_to_finish_topo_el);
+        this.routes.push(r);
+
+        r.readyRoute();
+
+        // throw new Error(not implemented) *** need to set all singals along the path to go or warning for the before last
+        // throw new Error("ERR15 not implemented"); 
+
+    }
+    
+    recFuncFindPath(prev, current, end, visited_directed_segment) { // Need to give it an empty set at the start "visited_directel_segment". Will return [false] or [true, [list of topo ele finish to start]].
+        visited_directed_segment.add(prev.name + "->" + current.name);
+
+        // To implement : the breath first search may find weird convoluted routes instead of the easier simpler route. try another algorith for smaller routes
+
+        if (current===end && prev===end.getOrigin()) {
+            return [ true , [ end, prev ] ];
+        } else {
+            let listNextTopoEleToSearch = current.neighorsbWhenCommingFrom(prev);
+            for (const next of listNextTopoEleToSearch) {
+
+                if (!visited_directed_segment.has(current.name + "->" + next.name)) {
+                    const retVal = this.recFuncFindPath(current, next, end, visited_directed_segment);
+                    const foundIt = retVal[0];
+                    if (foundIt) {
+                        retVal[1].push(prev);
+                        return retVal;
+                    }
+                }
+                // Else, continue searching other neighbors.
+            }
+            return [ false ]; // All neighbors have failed, go back a node.
+        }
     }
 
 }
@@ -218,7 +525,6 @@ class PolecatElement {
         if (x <=0 || y<=0) { throw new Error("ERR1 values must be positive"); }        
         this.x = x;
         this.y = y;
-        this.actionSelectionMode = { active:false, list:[] };
     }
     
     static createFromTopoEl(topo_el, polecat_parent, init_arr) {
@@ -248,15 +554,19 @@ class PolecatElement {
             case "occupied":
                 return "red";
             case "vacant":
-                if (this.topo_el.isLocked()) {
+                if (this.topo_el.isReserved()) {
                     return "blue";
                 } else {
                     return "black"
                 }
-            case "disturbed":
+            case "faulty":
                 return "magenta";
             default: throw new Error("ERR10 incorrect tvr state");
         }
+    }
+
+    trackColorForNeighbor(topo_el) {
+        return this.trackColor(); // For most elements, the basic function is this one. The track color is the same for all neighbors asking.
     }
 
     dirXSign(dir) {
@@ -286,17 +596,21 @@ class PolecatElement {
         }
     }
 
+    half_unit() {
+        return (this.unit_len()-1)*0.5+1;
+    }
+
     midCoord() {
-        const unit_len = this.polecat_parent.unit_len;
-        const half_unit = (unit_len-1)*0.5+1;
+        const unit_len = this.unit_len();
+        const half_unit = this.half_unit();
         const x_mid = (this.x-1)*unit_len+half_unit;
         const y_mid = (this.y-1)*unit_len+half_unit;
         return [x_mid, y_mid];
     }
 
     edgeCoord(dir) {
-        const unit_len = this.polecat_parent.unit_len;
-        const half_unit = (unit_len-1)*0.5+1;
+        const unit_len = this.unit_len();
+        const half_unit = this.half_unit();
 
         const [x_mid, y_mid] = this.midCoord();
 
@@ -309,7 +623,7 @@ class PolecatElement {
     }
 
     isClicked(click_x, click_y) {
-        const unit_len = this.polecat_parent.unit_len;
+        const unit_len = this.unit_len();
         const my_top = (this.y-1)*unit_len;
         const my_bottom = this.y*unit_len;
         const my_left = (this.x-1)*unit_len;
@@ -321,109 +635,37 @@ class PolecatElement {
         return clicked;
     }
 
-    activateActionSelectionMode() {
-        this.actionSelectionMode = { active:true, list:this.topo_el.possibleActions() };
-    }
-
-    deactivateActionSelectionMode() {
-        this.actionSelectionMode = { active:false, list:[] };
-    }
-
-    actionIsClicked(click_x, click_y) {
-        const unit_len = this.unit_len();
-        const actionMenuLeft = (this.x-1)*unit_len;
-        const actionMenuRight = this.x*unit_len;
-        
-        let notFound = true;
-        if ( (actionMenuLeft<click_x) && (click_x<actionMenuRight) ) {
-            const actions = this.actionSelectionMode.list; // using the list saved when originally displayed, not the current situation which may have changed
-            let rowPxHeight = this.actionSelectionMenuRowHeight(actions);
-    
-            let actionMenuTop = (this.y-1)*unit_len;
-            let actionMenuBottom = actionMenuTop+rowPxHeight;
-            for (let i = 0; (i < actions.length) && notFound; i++) {
-                actionMenuTop += rowPxHeight;
-                actionMenuBottom += rowPxHeight;
-                if ( (actionMenuTop<click_y) && (click_y<actionMenuBottom) ) {
-                    // this.topo_el.executeAction(actions[i]);
-                    this.executeAction(actions[i]);
-                    notFound = false;
-                }
-            }
-        }
-        if (notFound) {
-            this.polecat_parent.currentMode = { name:"simple_visualisation" };
-            this.deactivateActionSelectionMode();            
-        }
-    }
-
     unit_len() {
         return this.polecat_parent.unit_len;
     }
 
-    actionSelectionMenuRowHeight(actions) {
-        const nbRows = 1 + actions.length; // 1rst row is the name;
-        let rowPxHeight = Math.floor(this.unit_len()/nbRows);
-        if (rowPxHeight<1) {
-            rowPxHeight = 1;
-        } else if (rowPxHeight > 20) {
-            rowPxHeight = 20;
-        }
-        return rowPxHeight;
-    }
-
-    drawActionSelection (actionToHighlight) {
-        const ctx = this.ctx;
-        const actions = this.actionSelectionMode.list;
-        const unit_len = this.unit_len();
-
-        // ctx.fillStyle = "red";
-        // ctx.fillRect((this.x-1)*unit_len, (this.y-1)*unit_len, unit_len, unit_len);
-
-        let rowPxHeight = this.actionSelectionMenuRowHeight(actions);
-
-        const textPxHeight = rowPxHeight.toString();
-        
-        const xText = (this.x-1)*unit_len;
-        let yText = (this.y-1)*unit_len+rowPxHeight*0.8;
-        const xRect = (this.x-1)*unit_len;
-        let yRect = (this.y-1)*unit_len;
-        
-        ctx.fillStyle = "blue";
-        ctx.fillRect(xRect, yRect, unit_len, rowPxHeight);
-        ctx.fillStyle = "black";        
-        ctx.font = "bold italic "+textPxHeight+"px Arial";
-        ctx.fillText(this.topo_el.name, xText, yText, unit_len);
-        ctx.font = textPxHeight+"px Arial";
-        
-        const rectColors = ["rgb(100 100 100)", "rgb(200 200 200)"];
-        for (let i = 0; i < actions.length; i++) {
-            yText += rowPxHeight;
-            yRect += rowPxHeight;
-            
-            ctx.fillStyle = rectColors[i%2];
-            ctx.fillRect(xRect, yRect, unit_len, rowPxHeight);
-            if (actionToHighlight==actions[i]) {
-                ctx.fillStyle = "blue";
-            } else {
-                ctx.fillStyle = "black";
-            }
-            ctx.fillText(actions[i], xText, yText, unit_len);
-        }
-
-        ctx.strokeStyle = "red";
-        ctx.lineWidth = 2;
-        ctx.strokeRect((this.x-1)*unit_len, (this.y-1)*unit_len, unit_len, unit_len);
-
-    }
-
-
-    executeActionBackToSimpVisu(text) {
+    simpleExecuteAction(text) {
         this.topo_el.executeAction(text);
-        this.polecat_parent.currentMode = { name:"simple_visualisation" };
-        this.deactivateActionSelectionMode();            
     }
 
+    drawReserved() { // Draw a bleu square if element is reserved in a route.
+        if (this.topo_el.reserved!==null) {
+            const half_unit = this.half_unit();
+            const square_side_len = half_unit*0.1;
+            const [x_mid, y_mid] = this.midCoord();
+            const xRect = x_mid-square_side_len;
+            const yRect = y_mid-0.5*half_unit;
+            this.ctx.fillStyle = "blue";
+            this.ctx.fillRect(xRect, yRect, square_side_len, square_side_len);
+        }
+    }
+
+    drawFlanckProtecting() { // Draw a orange square if element has at least one flanck protection request.
+        if (this.topo_el.flanckProtectionRequests.length>0) {
+            const half_unit = this.half_unit();
+            const square_side_len = half_unit*0.1;
+            const [x_mid, y_mid] = this.midCoord();
+            const xRect = x_mid+square_side_len;
+            const yRect = y_mid-0.5*half_unit;
+            this.ctx.fillStyle = "orange";
+            this.ctx.fillRect(xRect, yRect, square_side_len, square_side_len);
+        }
+    }
 }
 
 class PolecatSwitch extends PolecatElement {
@@ -438,14 +680,25 @@ class PolecatSwitch extends PolecatElement {
         this.validate_dir_input(tip);
         this.validate_dir_input(left);
         this.validate_dir_input(right);
-        if((tip.slice(-1)==left.slice(-1)) || (tip.slice(-1)==right.slice(-1))) { throw new Error("ERR5 the legs cannot be on the same side as the tip"); }
+        if((tip.slice(-1)==left.slice(-1)) || (tip.slice(-1)==right.slice(-1))) { console.log(topo_el); console.log(init_arr); throw new Error("ERR5 the legs cannot be on the same side as the tip"); }
 
         this.tip = tip;
         this.left = left;
         this.right = right;
     }
 
-    drawBranch(dir, partially) { // partially [boolean]
+    trackColorForNeighbor(topo_el) {
+        const posi = this.topo_el.position;
+        const nei_posi = this.topo_el.whoIsThisNeighbor(topo_el);
+        
+        if ((nei_posi=="left" && posi=="right") || (nei_posi=="right" && posi=="left")) {
+            return "black";
+        } else {
+            return this.trackColor();
+        }
+    }
+
+    drawBranch(dir, partially, color) { // partially [boolean]
         const ctx = this.ctx;
         const [x_mid, y_mid] = this.midCoord();
         const [x_edge, y_edge] = this.edgeCoord(dir);
@@ -459,6 +712,7 @@ class PolecatSwitch extends PolecatElement {
             x_start = x_mid;
             y_start =  y_mid;
         }
+        ctx.strokeStyle = color;    
         ctx.beginPath();
         ctx.moveTo(x_start, y_start);
         ctx.lineTo(x_edge, y_edge);
@@ -466,33 +720,30 @@ class PolecatSwitch extends PolecatElement {
     }
 
     draw() {
-        if (this.actionSelectionMode.active) {
-            this.drawActionSelection();
-        } else {
-            const ctx = this.ctx;
-            const col = this.trackColor(); // nomally if the other unused branch has the color of its neighbor                
-            ctx.strokeStyle = col;
-            ctx.lineWidth = 1;
-    
-            this.drawBranch(this.tip, false);
-    
-            switch(this.topo_el.position) {
-                case "left":
-                    this.drawBranch(this.left, false);
-                    this.drawBranch(this.right, true);
-                    break;
-                case "right":
-                    this.drawBranch(this.left, true);
-                    this.drawBranch(this.right, false);
-                    break;
-                default:
-                    throw new Error("ERR9 invalid position");                
-            }
+        const ctx = this.ctx;
+        const col = this.trackColor(); // nomally if the other unused branch has the color of its neighbor                
+        ctx.lineWidth = 1;
+
+        this.drawBranch(this.tip, false, col);
+
+        switch(this.topo_el.position) {
+            case "left":
+                this.drawBranch(this.left, false, col);
+                this.drawBranch(this.right, true, "black");
+                break;
+            case "right":
+                this.drawBranch(this.left, true, "black");
+                this.drawBranch(this.right, false, col);
+                break;
+            default:
+                throw new Error("ERR9 invalid position");                
         }
+        this.drawReserved();
+        this.drawFlanckProtecting();
     }
 
     executeAction(text) {
-        this.executeActionBackToSimpVisu(text);
+        this.simpleExecuteAction(text);
     }
 }
 
@@ -546,17 +797,17 @@ class PolecatSegment extends Polecat2SidedElement {
     constructor(topo_el, polecat_parent, init_arr) {
         super(topo_el, polecat_parent, init_arr);
     }
-
+    
     draw() {
-        if (this.actionSelectionMode.active) {
-            this.drawActionSelection();
-        } else {
-            const color = this.trackColor();
-            super.draw(color, color);
-        }
+        const color = this.trackColor();
+        super.draw(color, color);
+
+        this.drawReserved();
+        this.drawFlanckProtecting();
     }
+
     executeAction(text) {
-        this.executeActionBackToSimpVisu(text);
+        this.simpleExecuteAction(text);
     }
 }
 
@@ -591,32 +842,43 @@ class PolecatSignal extends Polecat2SidedElement {
             case "stop": return "red";
             case "warning": return "orange";
             case "go": return "green";
+            case "faulty": return "magenta";
             default: throw new Error("ERR8 invalid imageShown");
         }
     }
 
     draw() {
-        if (this.actionSelectionMode.active) {
-            if (this.polecat_parent.currentMode.name == "shunting_route_end_selection") {
-                this.drawActionSelection("start shunting route");
-            } else {
-                this.drawActionSelection();
-            }
-        } else {
-            let col = this.topo_el.origin().graphical_rep.trackColor();
-            this.drawHalf(this.side1, col);
-            col = this.topo_el.goal().graphical_rep.trackColor();
-            this.drawHalf(this.side2, col)
+        let col = this.topo_el.getOrigin().graphical_rep.trackColorForNeighbor(this.topo_el);
+        this.drawHalf(this.side1, col);
+        col = this.topo_el.getGoal().graphical_rep.trackColorForNeighbor(this.topo_el);
+        this.drawHalf(this.side2, col)
 
-            col = this.signalColor();
-            const [ x_1, y_1, x_2, y_2, x_3, y_3 ] = this.signalCoords();
-            this.ctx.strokeStyle = col;
-            this.ctx.beginPath();
-            this.ctx.moveTo(x_1, y_1);
-            this.ctx.lineTo(x_2, y_2);
-            this.ctx.lineTo(x_3, y_3);
-            this.ctx.stroke();
+        col = this.signalColor();
+        const [ x_1, y_1, x_2, y_2, x_3, y_3 ] = this.signalCoords();
+        this.ctx.strokeStyle = col;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x_1, y_1);
+        this.ctx.lineTo(x_2, y_2);
+        this.ctx.lineTo(x_3, y_3);
+        this.ctx.stroke();
+
+        this.drawReserved();
+        this.drawFlanckProtecting();
+
+        if (this.polecat_parent.currentMode.name=="shunting_route_end_selection" && this.polecat_parent.currentMode.start===this) {
+            this.drawStartOfSelectionMode();
         }
+    }
+
+    drawStartOfSelectionMode() { // draw a bleu square contour around the element
+        const half_unit = this.half_unit();
+        const square_side_len = half_unit;
+        const [x_mid, y_mid] = this.midCoord();
+        const xRect = x_mid-half_unit*0.5;
+        const yRect = y_mid-half_unit*0.5;
+        this.ctx.strokeStyle = "blue";
+        this.ctx.lineWidth = 4;
+        this.ctx.strokeRect(xRect, yRect, square_side_len, square_side_len);
     }
 
     executeAction(text) {
@@ -625,7 +887,7 @@ class PolecatSignal extends Polecat2SidedElement {
                 this.polecat_parent.currentMode = { name:"shunting_route_end_selection", start:this };
                 break;
             default:
-                this.executeActionBackToSimpVisu(text);
+                this.simpleExecuteAction(text);
                 break;
         }
     }
@@ -647,8 +909,7 @@ class Polecat {
 
         this.unit_len = 99; // One unit is 99 pixels. Code is meant to use odd number.
 
-        // this.actionSelectionMode = { active:false, element:null } ;
-        this.currentMode = { name:"simple_visualisation" }; // simple_visualisation, single_element_action_selection, shunting_route_end_selection
+        this.currentMode = { name:"simple_visualisation" }; // simple_visualisation, single_element_action_selection, shunting_route_end_selection   // delete the now useless single_action_election_mode ?
         
         this.setTotalWidthHeigth();
         this.drawElements();
@@ -674,23 +935,55 @@ class Polecat {
         });
     }
 
-    setupEventListeners() { // TODO *** finish implementation
-        window.addEventListener('mousedown', function (event) {
-            musterLuppe.actionSelectionMouseDown(event, false); // *** mettre this plutot que musterLuppe ?
-            // this.actionSelectionMouseDown(event, false);
-        })
-        window.addEventListener('mouseup', function (event) {
-            musterLuppe.actionSelectionMouseUp(event, false);
-            // this.actionSelectionMouseUp(event, false);
-        })
-        window.addEventListener('touchstart', function (event) {
-            musterLuppe.actionSelectionMouseDown(event, true);
-            // this.actionSelectionMouseDown(event, true);
-        })
-        window.addEventListener('touchend', function (event) {
-            musterLuppe.actionSelectionMouseUp(event, true);
-            // this.actionSelectionMouseUp(event, true);
-        })
+    setupEventListeners() {
+        // desktop: right-click opens the menu
+        this.canvas.addEventListener("contextmenu", (event) => {
+            event.preventDefault();
+            const [x, y] = this.get_click_canvas_coord(event, false);
+            this.requestMenu(x, y);
+        });
+
+        // desktop: left-click picks a route endpoint, or just dismisses
+        this.canvas.addEventListener("click", (event) => {
+            const [x, y] = this.get_click_canvas_coord(event, false);
+            if (this.currentMode.name === "shunting_route_end_selection") {
+                this.shunRouEndSelClick(x, y);
+            }
+            this.closeMenu();
+            this.drawElements();
+        });
+
+        // mobile: a simple tap opens the menu (or picks the endpoint)
+        this.canvas.addEventListener("touchend", (event) => {
+            event.preventDefault();                      // suppress the synthetic click
+            const [x, y] = this.get_click_canvas_coord(event, true);
+            if (this.currentMode.name === "shunting_route_end_selection") {
+                this.shunRouEndSelClick(x, y);
+                this.closeMenu();
+                this.drawElements();
+            } else {
+                this.requestMenu(x, y);
+            }
+        });
+
+        // dismiss: click anywhere outside
+        document.addEventListener("click", (ev) => {
+            if (!ev.target.closest("#ctxMenu") && ev.target !== this.canvas) {
+                this.closeMenu();
+                this.drawElements();
+            }
+        });
+
+        // dismiss or cancel: press Esc
+        document.addEventListener("keydown", (ev) => {
+            if (ev.key === "Escape") {
+                if (this.currentMode.name === "shunting_route_end_selection") {
+                    this.currentMode.name = "simple_visualisation";
+                }
+                this.closeMenu();
+                this.drawElements();
+            }
+        });
     }
 
     get_click_canvas_coord(event, touchNotMouse) {
@@ -709,88 +1002,7 @@ class Polecat {
             return [x, y];
     }
 
-    actionSelectionMouseDown(event, touchNotMouse) {
-
-        // switch the mode ?
-        // only do on clicks mouse down, not on mouse up. otherwise its too complicated
-        // if simple_visual
-        //      if click on element -> open the menu action selection mode
-        //      else  do nothing 
-        // if single element action selection mode
-        //      if click on action -> do it
-        //          if start shunting route -> shunting route endpoint selection mode
-        //          else back to simple_visualisation
-        //          !!!!! so the action changes the mode
-        //      else  back to simple_visualisation    (if click anywhere other than action !)
-        // if shunting route end element selection
-        //      if an element is clicked -> tell itlk to make a route.
-        //      back to simple_visualisation
-        const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
-
-        switch(this.currentMode.name) {
-            case "simple_visualisation":
-                this.simpVisuClick(x, y);
-                break;
-            case "single_element_action_selection":
-                this.singEleActSelClick(x, y);
-                break;
-            case "shunting_route_end_selection":
-                this.shunRouEndSelClick(x, y);
-                break;
-            default:
-                throw new Error("ERR18 unknow mode");
-                break;
-        }
-
-
-
-        // const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
-        // let notFound = true;
-        // for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
-        //     if (this.graph_elements[i].isClicked(x,y)) {
-        //         // this.graph_elements[i].actionSelectionModeOn = true;
-        //         this.graph_elements[i].activateActionSelectionMode(); // *** a supprimer / modifier
-        //         this.actionSelectionMode = { active:true, element:this.graph_elements[i] }
-        //         // this.actionSelectionMode = true;
-        //         notFound = false;
-        //     }
-        // }
-        // if(!notFound) {
-        //     this.drawElements(); // this will draw the actions selection menu
-        // }
-    }
-
-    actionSelectionMouseUp(event, touchNotMouse) {
-        // if (this.actionSelectionMode.active) {
-        //     const [x, y] = this.get_click_canvas_coord(event, touchNotMouse);
-        //     this.actionSelectionMode.element.actionIsClicked(x, y);
-        //     this.actionSelectionMode = { active:false, element:null }
-        //     this.drawElements();
-        // }
-    }
-
-    simpVisuClick(click_x, click_y) { // if click on element -> open the menu action selection mode
-        let notFound = true;
-        for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
-            if (this.graph_elements[i].isClicked(click_x,click_y)) {
-                this.graph_elements[i].activateActionSelectionMode();
-                this.currentMode = { name:"single_element_action_selection", element:this.graph_elements[i] };
-                notFound = false;
-                this.drawElements(); // this will draw the actions selection menu
-            }
-        }
-    }
-
-    singEleActSelClick(click_x, click_y) {
-        this.currentMode.element.actionIsClicked(click_x, click_y);
-        this.drawElements();
-    }
-    
     shunRouEndSelClick(click_x, click_y) {
-        // if shunting route end element selection
-        //      if an element is clicked -> tell itlk to make a route.
-        //      back to simple_visualisation
-        
         let notFound = true;
         for (let i = 0; (i < this.graph_elements.length) && notFound; i++) {
             if (this.graph_elements[i].isClicked(click_x, click_y)) {
@@ -799,53 +1011,123 @@ class Polecat {
                 const topo_el_end = this.graph_elements[i].topo_el;
 
                 this.itlk.establishShuntingRoute(topo_el_start, topo_el_end);
+                // if there is an error thrown, display it on the monitor
 
                 notFound = false;
             }
         }
-        
-        this.currentMode.start.deactivateActionSelectionMode();
-        this.currentMode = { name:"simple_visualisation" };
-        this.drawElements();
     }
     
-    // get ctx() { return this.ctx; }
+    openMenu(pc_el, px, py) {
+        const m = document.getElementById("ctxMenu");
+        m.innerHTML = "";
+
+        const hdr = document.createElement("div");
+        hdr.className = "hdr";
+        hdr.textContent = pc_el.topo_el.name;
+        m.appendChild(hdr);
+
+        const actions = pc_el.topo_el.possibleActions();   // array of strings
+
+        if (actions.length === 0) {
+            const none = document.createElement("div");
+            none.className = "empty";
+            none.textContent = "no action available";
+            m.appendChild(none);
+        }
+
+        actions.forEach(a => {
+            const b = document.createElement("button");
+            b.textContent = a;
+            b.addEventListener("click", ev => {
+                ev.stopPropagation();
+                const target = pc_el; // capture before mode reset
+                this.hideMenu();
+                target.executeAction(a); // may set a new mode
+                this.drawElements();
+            });
+            m.appendChild(b);
+        });
+
+        m.hidden = false;   // must be visible before offsetWidth/offsetHeight are read
+
+        const wrap = document.getElementById("canvasWrap");
+
+        // visible band of the scrollable content, in content coordinates
+        const viewLeft   = wrap.scrollLeft;
+        const viewTop    = wrap.scrollTop;
+        const viewRight  = viewLeft + wrap.clientWidth;
+        const viewBottom = viewTop  + wrap.clientHeight;
+
+        // px/py are relative to the canvas border box; shift into wrapper coordinates
+        let left = px + this.canvas.offsetLeft;
+        let top  = py + this.canvas.offsetTop;
+
+        // flip to the other side of the cursor rather than overflow the visible area
+        if (left + m.offsetWidth  > viewRight)  { left -= m.offsetWidth;  }
+        if (top  + m.offsetHeight > viewBottom) { top  -= m.offsetHeight; }
+
+        // final safety clamp into the visible band
+        left = Math.max(viewLeft, Math.min(left, Math.max(viewLeft, viewRight  - m.offsetWidth)));
+        top  = Math.max(viewTop,  Math.min(top,  Math.max(viewTop,  viewBottom - m.offsetHeight)));
+
+        m.style.left = left + "px";
+        m.style.top  = top  + "px";
+
+        // this.currentMode = { name: "single_element_action_selection" }; // not used anymore, delete ? 
+    }
+
+    hideMenu() {
+        document.getElementById("ctxMenu").hidden = true;
+    }
+
+    closeMenu() {
+        this.hideMenu();
+        //if (this.currentMode.name === "single_element_action_selection") {
+        //    this.currentMode = { name: "simple_visualisation" };
+        //}
+        this.currentMode = { name: "simple_visualisation" }; // maybe the one above is better ?
+
+    }
+
+    polecatElementAt(x, y) {
+        return this.graph_elements.find(el => el.isClicked(x, y)) || null;
+    }
+
+    // right-click / tap -> open menu on the element under the cursor
+    requestMenu(x, y) {
+        this.closeMenu();
+        const polecatEl = this.polecatElementAt(x, y);
+        if (polecatEl) {
+            this.openMenu(polecatEl, x, y);
+        }
+        this.drawElements();
+    }
 }
 
 
 constructionDocuments = [
     [ // Switches
-        ["W1"],
-        ["W2"]
+        // name   tip    left   right
+        ["W1", "Z12A", "Z1B", "Z2B"],
+        ["W2", "Z92B", "Z2A", "Z1A"]
     ],
     [ // Segments
-        ["G12"],
-        ["G1"],
-        ["G2"],
-        ["G92"]
+        // name neighbor1 neighbor2
+        ["G12", "Z12A", "G92"],
+        ["G1",  "Z1A",  "Z1B"],
+        ["G2",  "Z2A",  "Z2B"],
+        ["G92", "Z92B", "G12"]
     ],
     [ // Signals
-        ["Z12A"],
-        ["Z1B"],
-        ["Z1A"],
-        ["Z2B"],
-        ["Z2A"],
-        ["Z92B"]
-    ],
-    [ // Topologie, neighbors
-        ["W1", "Z2B"],
-        ["W2", ["Z92B", "Z2A", "Z1A"]],
-        ["G12", ["Z12A", "G92"]],
-        ["G1", ["Z1A", "Z1B"]],
-        ["G2", ["Z2A", "Z2B"]],
-        ["G92", ["Z92B", "G12"]],
-        ["Z12A", ["G12", "W1"]],
-        ["Z1B", ["G1", "W1"]],
-        ["Z1A", ["G1", "W2"]],
-        ["Z2B", ["G2", "W1"]],
-        ["Z2A", ["G2", "W2"]],
-        ["Z92B", ["G92", "W2"]],
-    ]  
+        // name  origin_nieghbor goal_neighbor
+        ["Z12A", "G12", "W1"],
+        ["Z1B", "G1", "W1"],
+        ["Z1A", "G1", "W2"],
+        ["Z2B", "G2", "W1"],
+        ["Z2A", "G2", "W2"],
+        ["Z92B", "G92", "W2"]
+    ]
 ];
 
 polecatCD = [ // Graphic representation
@@ -860,8 +1142,207 @@ polecatCD = [ // Graphic representation
     ["Z1A", 6, 1, "W", "SE"],
     ["Z2B", 4, 2, "E", "W"],
     ["Z2A", 6, 2, "W", "E"],
-    ["Z92B", 8, 2, "E", "W"],
+    ["Z92B", 8, 2, "E", "W"]
 ];
+
+
+////////////////// AI
+constructionDocumentsAI = [
+    [ // Switches
+        // name   tip     left    right
+        ["W1",  "AW",   "V2",   "W2" ],
+        ["W2",  "W1",   "V3",   "V4" ],
+        ["W3",  "V2",   "V1",   "V2b"],
+        ["W4",  "W5",   "V2c",  "V1b"],
+        ["W5",  "W6",   "V3d",  "W4" ],
+        ["W6",  "B1",   "W5",   "V4e"]
+    ],
+    [ // Segments
+        // name  neighbor1  neighbor2
+        ["GW",  "GE",  "AE" ],   // open line, west (loops to GE)
+        ["SW1", "AE",  "AW" ],   // line section between the two line signals
+        ["V2",  "W1",  "W3" ],
+        ["V1",  "W3",  "Z1W"],
+        ["V2b", "W3",  "Z2W"],
+        ["V3",  "W2",  "V3b"],
+        ["V3b", "V3",  "Z3W"],
+        ["V4",  "W2",  "V4b"],
+        ["V4b", "V4",  "Z4W"],
+        ["G1",  "Z1W", "Z1E"],   // platform track 1
+        ["G2",  "Z2W", "Z2E"],   // platform track 2
+        ["G3",  "Z3W", "Z3E"],   // platform track 3 (main)
+        ["G4",  "Z4W", "Z4E"],   // siding
+        ["V1b", "Z1E", "W4" ],
+        ["V2c", "Z2E", "W4" ],
+        ["V3c", "Z3E", "V3d"],
+        ["V3d", "V3c", "W5" ],
+        ["V4c", "Z4E", "V4d"],
+        ["V4d", "V4c", "V4e"],
+        ["V4e", "V4d", "W6" ],
+        ["SH",  "B1",  "B2" ],
+        ["GE",  "B2",  "GW" ]    // open line, east (loops to GW)
+    ],
+    [ // Signals
+        // name   origin (behind)  goal (ahead)
+        ["AE",  "GW", "SW1"],   // entry from west
+        ["AW",  "W1", "SW1"],   // exit to west
+        ["Z1W", "G1", "V1" ],   // track 1 westward departure
+        ["Z2W", "G2", "V2b"],
+        ["Z3W", "G3", "V3b"],
+        ["Z4W", "G4", "V4b"],
+        ["Z1E", "G1", "V1b"],   // track 1 eastward departure
+        ["Z2E", "G2", "V2c"],
+        ["Z3E", "G3", "V3c"],
+        ["Z4E", "G4", "V4c"],
+        ["B1",  "W6", "SH" ],   // exit to east
+        ["B2",  "GE", "SH" ]    // entry from east
+    ]
+];
+
+polecatCDAI = [ // name, x, y, then dirs (switch: tip,left,right | 2-sided: side1,side2)
+    // --- main line / row 3 ---
+    ["GW",   1, 3, "W",  "E" ],
+    ["AE",   2, 3, "W",  "E" ],
+    ["SW1",  3, 3, "W",  "E" ],
+    ["AW",   4, 3, "E",  "W" ],
+    ["W1",   5, 3, "W",  "NE", "E" ],
+    ["W2",   6, 3, "W",  "E",  "SE"],
+    ["V3",   7, 3, "W",  "E" ],
+    ["V3b",  8, 3, "W",  "E" ],
+    ["Z3W",  9, 3, "E",  "W" ],
+    ["G3",  10, 3, "W",  "E" ],
+    ["Z3E", 11, 3, "W",  "E" ],
+    ["V3c", 12, 3, "W",  "E" ],
+    ["V3d", 13, 3, "W",  "E" ],
+    ["W5",  14, 3, "E",  "W",  "NW"],
+    ["W6",  15, 3, "E",  "W",  "SW"],
+    ["B1",  16, 3, "W",  "E" ],
+    ["SH",  17, 3, "W",  "E" ],
+    ["B2",  18, 3, "E",  "W" ],
+    ["GE",  19, 3, "W",  "E" ],
+    // --- row 2 (track 2 + ladders) ---
+    ["V2",   6, 2, "SW", "E" ],
+    ["W3",   7, 2, "W",  "NE", "E" ],
+    ["V2b",  8, 2, "W",  "E" ],
+    ["Z2W",  9, 2, "E",  "W" ],
+    ["G2",  10, 2, "W",  "E" ],
+    ["Z2E", 11, 2, "W",  "E" ],
+    ["V2c", 12, 2, "W",  "E" ],
+    ["W4",  13, 2, "SE", "W",  "NW"],
+    // --- row 1 (track 1) ---
+    ["V1",   8, 1, "SW", "E" ],
+    ["Z1W",  9, 1, "E",  "W" ],
+    ["G1",  10, 1, "W",  "E" ],
+    ["Z1E", 11, 1, "W",  "E" ],
+    ["V1b", 12, 1, "W",  "SE"],
+    // --- row 4 (siding) ---
+    ["V4",   7, 4, "NW", "E" ],
+    ["V4b",  8, 4, "W",  "E" ],
+    ["Z4W",  9, 4, "E",  "W" ],
+    ["G4",  10, 4, "W",  "E" ],
+    ["Z4E", 11, 4, "W",  "E" ],
+    ["V4c", 12, 4, "W",  "E" ],
+    ["V4d", 13, 4, "W",  "E" ],
+    ["V4e", 14, 4, "W",  "NE"]
+];
+
+
+////////////////// CoP
+constructionDocuments = [
+    [ // Switches
+        // name   tip    left   right
+        ["W1", "Z12A", "W2", "G22.1"],
+        ["W2", "W3", "W1", "Z11A"],
+        ["W3", "W2", "Z31B", "W4"],
+        ["W4", "Z32B", "G22.2", "W3"],
+        ["W5", "Z32A", "W6", "W7"],
+        ["W6", "Z1B", "W5", "Z31A"],
+        ["W7", "W5", "Z2B", "Z3B"],
+        ["W8", "Z2A", "W9", "W10"],
+        ["W9", "Z91B", "W8", "Z1A"],
+        ["W10", "Z92B", "Z3A", "W8"]
+    ],
+    [ // Segments
+        // name neighbor1 neighbor2
+        ["G11.1", "G91", "G11.2"],
+        ["G11.2", "G11.1", "Z11A"],
+        ["G31.1", "Z31B", "G31.2"],
+        ["G31.2", "G31.1", "G31.3"],
+        ["G31.3", "G31.2", "Z31A"],
+        ["G1.1", "Z1B", "G1.2"],
+        ["G1.2", "G1.1", "Z1A"],
+        ["G91", "Z91B", "G11.1"],
+        ["G12",  "G92",  "Z12A"],
+        ["G22.1", "W1", "G22.2"],
+        ["G22.2", "G22.1", "W4"],
+        ["G32", "Z32B", "Z32A"],
+        ["G2", "Z2B", "Z2A"],
+        ["G92", "Z92B", "G12"],
+        ["G3.1", "Z3B", "G3.2"],
+        ["G3.2", "G3.1", "Z3A"]
+    ],
+    [ // Signals
+        // name  origin_nieghbor goal_neighbor
+        ["Z11A", "G11.2", "W2"],
+        ["Z31B", "G31.1", "W3"],
+        ["Z31A", "G31.3", "W6"],
+        ["Z1B", "G1.1", "W6"],
+        ["Z1A", "G1.2", "W9"],
+        ["Z91B", "G91", "W9"],
+        ["Z12A", "G12", "W1"],
+        ["Z32B", "G32", "W4"],
+        ["Z32A", "G32", "W5"],
+        ["Z2B", "G2", "W7"],
+        ["Z2A", "G2", "W8"],
+        ["Z92B", "G92", "W10"],
+        ["Z3B", "G3.1", "W7"],
+        ["Z3A", "G3.2", "W10"]
+    ]
+];
+
+polecatCD = [ // Graphic representation
+    ["W1", 3, 2, "W", "NE", "E"],
+    ["W2", 4, 1, "E", "SW", "W"],
+    ["W3", 5, 1, "W", "E", "SE"],
+    ["W4", 6, 2, "E", "W", "NW"],
+    ["W5", 10, 2, "W", "NE", "E"],
+    ["W6", 11, 1, "E", "SW", "W"],
+    ["W7", 11, 2, "W", "E", "SE"],
+    ["W8", 15, 2, "W", "NE", "E"],
+    ["W9", 16, 1, "E", "SW", "W"],
+    ["W10", 16, 2, "E", "SW", "W"],
+    ["G11.1", 1, 1, "W", "E"],
+    ["G11.2", 2, 1, "W", "E"],
+    ["G31.1", 7, 1, "W", "E"],
+    ["G31.2", 8, 1, "W", "E"],
+    ["G31.3", 9, 1, "W", "E"],
+    ["G1.1", 13, 1, "W", "E"],
+    ["G1.2", 14, 1, "W", "E"],
+    ["G91", 18, 1, "W", "E"],
+    ["G12", 1, 2, "W", "E"],
+    ["G22.1", 4, 2, "W", "E"],
+    ["G22.2", 5, 2, "W", "E"],
+    ["G32", 8, 2, "W", "E"],
+    ["G2", 13, 2, "W", "E"],
+    ["G92", 18, 2, "W", "E"],
+    ["G3.1", 13, 3, "W", "E"],
+    ["G3.2", 14, 3, "W", "E"],
+    ["Z11A", 3, 1, "W", "E"],
+    ["Z31B", 6, 1, "E", "W"],
+    ["Z31A", 10, 1, "W", "E"],
+    ["Z1B", 12, 1, "E", "W"],
+    ["Z1A", 15, 1, "W", "E"],
+    ["Z91B", 17, 1, "E", "W"],
+    ["Z12A", 2, 2, "W", "E"],
+    ["Z32B", 7, 2, "E", "W"],
+    ["Z32A", 9, 2, "W", "E"],
+    ["Z2B", 12, 2, "E", "W"],
+    ["Z2A", 14, 2, "W", "E"],
+    ["Z92B", 17, 2, "E", "W"],
+    ["Z3B", 12, 3, "E", "NW"],
+    ["Z3A", 15, 3, "W", "NE"]
+];
+
 
 const musterStw = new Interlocking(constructionDocuments);
 const musterLuppe = new Polecat(musterStw, polecatCD);

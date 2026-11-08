@@ -1,10 +1,20 @@
 <!DOCTYPE html>
 <html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Interlocking Simulator</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="stylesheet" href="styles.css">
+</head>
 <body>
 
 <h1>Interlocking Simulator</h1>
 
-<canvas id="graphicCanvas" width="200" height="100" style="border:1px solid black;"></canvas>
+<div id="canvasWrap">
+  <canvas id="graphicCanvas" style="border:1px solid black;"></canvas>
+  <div id="ctxMenu" hidden></div>
+</div>
 
 <script src="script.js">
 </script>
