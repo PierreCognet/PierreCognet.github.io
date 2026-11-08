@@ -1,3 +1,6 @@
+const TAP_SLOP   = 12;    // px of finger movement still counted as a tap
+const TAP_MAX_MS = 700;   // longer than this is a press-and-hold, not a tap
+
 class TrackVacancyRegister {
     constructor() {
         this.state = "vacant"; // vacant, occupied or faulty
@@ -910,7 +913,8 @@ class Polecat {
         this.unit_len = 99; // One unit is 99 pixels. Code is meant to use odd number.
 
         this.currentMode = { name:"simple_visualisation" }; // simple_visualisation, single_element_action_selection, shunting_route_end_selection   // delete the now useless single_action_election_mode ?
-        
+        this.touchTracker = { x:0, y:0, t:0, valid:false };
+
         this.setTotalWidthHeigth();
         this.drawElements();
 
@@ -953,10 +957,37 @@ class Polecat {
             this.drawElements();
         });
 
-        // mobile: a simple tap opens the menu (or picks the endpoint)
+        // mobile: remember where the finger went down
+        this.canvas.addEventListener("touchstart", (event) => {
+            if (event.touches.length !== 1) { this.touchTracker.valid = false; return; }
+            const t = event.touches[0];
+            this.touchTracker = { x:t.clientX, y:t.clientY, t:Date.now(), valid:true };
+        }, { passive:true });
+
+        // mobile: any real movement means it was a scroll, not a tap
+        this.canvas.addEventListener("touchmove", (event) => {
+            if (!this.touchTracker.valid) { return; }
+            const t = event.touches[0];
+            const moved = Math.hypot(t.clientX - this.touchTracker.x,
+                                     t.clientY - this.touchTracker.y);
+            if (moved > TAP_SLOP) { this.touchTracker.valid = false; }
+        }, { passive:true });
+
+        // mobile: a genuine tap opens the menu (or picks the endpoint)
         this.canvas.addEventListener("touchend", (event) => {
-            event.preventDefault();                      // suppress the synthetic click
+            const tracker = this.touchTracker;
+            this.touchTracker = { x:0, y:0, t:0, valid:false };
+
+            if (!tracker.valid) { return; }                      // was a scroll
+            if (Date.now() - tracker.t > TAP_MAX_MS) { return; } // was a long press
+
+            const t = event.changedTouches[0];
+            const moved = Math.hypot(t.clientX - tracker.x, t.clientY - tracker.y);
+            if (moved > TAP_SLOP) { return; }
+
+            event.preventDefault();   // suppress the synthetic click
             const [x, y] = this.get_click_canvas_coord(event, true);
+
             if (this.currentMode.name === "shunting_route_end_selection") {
                 this.shunRouEndSelClick(x, y);
                 this.closeMenu();
